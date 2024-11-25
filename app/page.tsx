@@ -1,101 +1,378 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import { cleanup } from '@/utils/domainChecker';
+
+interface DomainResult {
+  domain: string;
+  available?: boolean;
+  price?: string;
+  error?: string;
+  checking?: boolean;
+  showAvailable?: boolean;
+}
+
+interface StarredDomain {
+  domain: string;
+  price?: string;
+  dateStarred: Date;
+  available?: boolean;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [description, setDescription] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [displayedDomains, setDisplayedDomains] = useState<DomainResult[]>([]);
+  const [overflowDomains, setOverflowDomains] = useState<DomainResult[]>([]);
+  const [starredDomains, setStarredDomains] = useState<StarredDomain[]>([]);
+  const [searchedDomains, setSearchedDomains] = useState<Set<string>>(new Set());
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const TARGET_DOMAIN_COUNT = 5;
+
+  // Cleanup browser on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, []);
+
+  const generateMoreDomains = async () => {
+    if (loading || !description) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          description,
+          excludeDomains: Array.from(searchedDomains)
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to generate domain suggestions');
+      }
+
+      const data = await response.json();
+      
+      // Add domains to display immediately with checking status
+      const newDomains: DomainResult[] = data.suggestions.map((domain: string) => ({
+        domain,
+        checking: true
+      }));
+
+      // Update searched domains
+      newDomains.forEach(d => {
+        searchedDomains.add(d.domain);
+      });
+      setSearchedDomains(new Set(searchedDomains));
+
+      // Start availability checks
+      const currentAvailableCount = displayedDomains.length;
+      const neededForDisplay = Math.max(0, TARGET_DOMAIN_COUNT - currentAvailableCount);
+      
+      if (neededForDisplay > 0) {
+        const domainsForDisplay = newDomains.slice(0, neededForDisplay);
+        const remainingDomains = newDomains.slice(neededForDisplay);
+        
+        setDisplayedDomains(prev => [...prev, ...domainsForDisplay]);
+        setOverflowDomains(prev => [...prev, ...remainingDomains]);
+      } else {
+        setOverflowDomains(prev => [...prev, ...newDomains]);
+      }
+
+      // Start checking availability
+      const checkAvailability = async () => {
+        try {
+          const response = await fetch('/api/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains: newDomains.map(d => d.domain) })
+          });
+          
+          if (!response.ok) throw new Error('Failed to check availability');
+          
+          const results = await response.json();
+          
+          // Update domains with availability immediately
+          const availableResults = results.filter(r => r.available);
+          const unavailableResults = results.filter(r => !r.available);
+          
+          // First, update all domains with their results
+          setDisplayedDomains(current => 
+            current.map(d => {
+              const result = results.find(r => r.domain === d.domain);
+              if (result) {
+                return {
+                  ...d,
+                  checking: false,
+                  available: result.available,
+                  error: result.error,
+                  showAvailable: result.available
+                };
+              }
+              return d;
+            })
+          );
+
+          setOverflowDomains(current => 
+            current.map(d => {
+              const result = results.find(r => r.domain === d.domain);
+              if (result) {
+                return {
+                  ...d,
+                  checking: false,
+                  available: result.available,
+                  error: result.error,
+                  showAvailable: result.available
+                };
+              }
+              return d;
+            })
+          );
+
+          // After a delay, remove unavailable domains and promote available ones if needed
+          setTimeout(() => {
+            setDisplayedDomains(current => {
+              const available = current.filter(d => d.available);
+              const needed = TARGET_DOMAIN_COUNT - available.length;
+              
+              if (needed > 0) {
+                // Promote domains from overflow
+                const promoted = overflowDomains
+                  .filter(d => d.available)
+                  .slice(0, needed);
+                
+                if (promoted.length > 0) {
+                  setOverflowDomains(overflow => 
+                    overflow.filter(d => !promoted.find(p => p.domain === d.domain))
+                  );
+                }
+                
+                return [...available, ...promoted];
+              }
+              
+              return available;
+            });
+          }, 2000);
+
+        } catch (error) {
+          console.error('Error checking availability:', error);
+          setError('Failed to check domain availability');
+        }
+      };
+
+      checkAvailability();
+      
+    } catch (err) {
+      console.error('Error generating domains:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Check if we need more domains whenever displayed domains changes
+  useEffect(() => {
+    if (displayedDomains.length < TARGET_DOMAIN_COUNT && description) {
+      generateMoreDomains();
+    }
+  }, [displayedDomains.length]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDisplayedDomains([]);
+    setOverflowDomains([]);
+    setSearchedDomains(new Set());
+    setError(null);
+    generateMoreDomains();
+  };
+
+  const handleStar = (domain: DomainResult) => {
+    const alreadyStarred = starredDomains.some(d => d.domain === domain.domain);
+    
+    if (alreadyStarred) {
+      setStarredDomains(starredDomains.filter(d => d.domain !== domain.domain));
+    } else {
+      setStarredDomains([...starredDomains, {
+        domain: domain.domain,
+        price: domain.price,
+        available: domain.available,
+        dateStarred: new Date()
+      }]);
+    }
+  };
+
+  const handleRemove = (domainToRemove: string) => {
+    // Remove from displayed domains
+    setDisplayedDomains(displayedDomains.filter(result => result.domain !== domainToRemove));
+    
+    // If we have overflow domains, move one to displayed
+    if (overflowDomains.length > 0) {
+      const [nextDomain, ...remainingOverflow] = overflowDomains;
+      setDisplayedDomains(current => [...current, nextDomain]);
+      setOverflowDomains(remainingOverflow);
+    }
+  };
+
+  return (
+    <main className="min-h-screen p-8 bg-gray-50">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-4xl font-bold mb-8 text-center text-gray-800">
+          SiteSnag Domain Generator
+        </h1>
+
+        <form onSubmit={handleSubmit} className="mb-8">
+          <div className="flex gap-4">
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe your website idea..."
+              className="flex-1 p-4 rounded-lg border border-gray-300 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={loading}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <button
+              type="submit"
+              disabled={loading || !description.trim()}
+              className="px-6 py-4 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Generating...' : 'Generate Domains'}
+            </button>
+          </div>
+        </form>
+
+        {error && (
+          <div className="p-4 mb-8 text-red-700 bg-red-100 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <div className="flex gap-8">
+          {/* Results Section */}
+          <div className="flex-1">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-semibold text-gray-700">Domain Suggestions</h2>
+              <div className="text-sm text-gray-500">
+                Showing {displayedDomains.length} of {displayedDomains.length + overflowDomains.length} domains
+              </div>
+            </div>
+            <div className="space-y-4">
+              {displayedDomains.map((result) => (
+                <div
+                  key={result.domain}
+                  className={`p-4 bg-white rounded-lg shadow-sm border transition-colors duration-300 ${
+                    result.checking ? 'border-blue-200' :
+                    result.showAvailable ? 'border-green-500' :
+                    !result.available ? 'border-red-500' :
+                    'border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-medium text-gray-900">{result.domain}</h3>
+                      <div className="flex items-center gap-2">
+                        {result.checking ? (
+                          <div className="flex items-center text-blue-600">
+                            <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Checking availability...
+                          </div>
+                        ) : result.available ? (
+                          <span className={`text-green-600 transition-opacity duration-300 ${result.showAvailable ? 'opacity-100' : 'opacity-0'}`}>
+                            Available - {result.price}
+                          </span>
+                        ) : (
+                          <span className="text-red-600">Not Available</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => handleStar(result)}
+                        className={`p-2 rounded-full hover:bg-gray-100 transition-colors ${
+                          starredDomains.some(d => d.domain === result.domain)
+                            ? 'text-yellow-500'
+                            : 'text-gray-400'
+                        }`}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-6 w-6"
+                          fill="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => handleRemove(result.domain)}
+                        className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-red-500"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-6 w-6"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {displayedDomains.length === 0 && !loading && (
+                <div className="text-center p-8 text-gray-500">
+                  No domains generated yet
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Starred Domains Section */}
+          <div className="w-80">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-700">Starred Domains</h2>
+            <div className="space-y-3">
+              {starredDomains.map((starred) => (
+                <div
+                  key={starred.domain}
+                  className="p-3 bg-white rounded-lg shadow-sm border border-gray-200"
+                >
+                  <h3 className="text-md font-medium text-gray-900">{starred.domain}</h3>
+                  <div className="flex items-center gap-2">
+                    {starred.available === undefined ? null : 
+                      starred.available ? (
+                        <span className="text-green-600 text-sm">Available - {starred.price}</span>
+                      ) : (
+                        <span className="text-red-600 text-sm">Not Available</span>
+                      )
+                    }
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Starred {starred.dateStarred.toLocaleDateString()}
+                  </p>
+                </div>
+              ))}
+              {starredDomains.length === 0 && (
+                <p className="text-gray-500 text-center p-4">
+                  No starred domains yet
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </div>
+    </main>
   );
 }
