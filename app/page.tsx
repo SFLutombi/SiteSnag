@@ -10,6 +10,8 @@ interface DomainResult {
   error?: string;
   checking?: boolean;
   showAvailable?: boolean;
+  selected?: boolean;
+  disliked?: boolean;
 }
 
 interface StarredDomain {
@@ -27,6 +29,8 @@ export default function Home() {
   const [overflowDomains, setOverflowDomains] = useState<DomainResult[]>([]);
   const [starredDomains, setStarredDomains] = useState<StarredDomain[]>([]);
   const [searchedDomains, setSearchedDomains] = useState<Set<string>>(new Set());
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [dislikedDomains, setDislikedDomains] = useState<string[]>([]);
 
   const TARGET_DOMAIN_COUNT = 5;
 
@@ -37,7 +41,7 @@ export default function Home() {
     };
   }, []);
 
-  const generateMoreDomains = async () => {
+  const handleGenerateDomains = async () => {
     if (loading || !description) return;
     
     setLoading(true);
@@ -47,7 +51,8 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           description,
-          excludeDomains: Array.from(searchedDomains)
+          excludeDomains: Array.from(searchedDomains),
+          dislikedDomains // Pass disliked domains to the AI
         })
       });
       
@@ -177,7 +182,7 @@ export default function Home() {
   // Check if we need more domains whenever displayed domains changes
   useEffect(() => {
     if (displayedDomains.length < TARGET_DOMAIN_COUNT && description) {
-      generateMoreDomains();
+      handleGenerateDomains();
     }
   }, [displayedDomains.length]);
 
@@ -187,7 +192,7 @@ export default function Home() {
     setOverflowDomains([]);
     setSearchedDomains(new Set());
     setError(null);
-    generateMoreDomains();
+    handleGenerateDomains();
   };
 
   const handleStar = (domain: DomainResult) => {
@@ -210,6 +215,140 @@ export default function Home() {
     setDisplayedDomains(displayedDomains.filter(result => result.domain !== domainToRemove));
     
     // If we have overflow domains, move one to displayed
+    if (overflowDomains.length > 0) {
+      const [nextDomain, ...remainingOverflow] = overflowDomains;
+      setDisplayedDomains(current => [...current, nextDomain]);
+      setOverflowDomains(remainingOverflow);
+    }
+  };
+
+  const handleMoreLikeThis = async (domain: string) => {
+    setSelectedDomain(domain);
+    setLoading(true);
+    try {
+      // Keep only the selected domain
+      setDisplayedDomains(current => 
+        current.filter(d => d.domain === domain).map(d => ({
+          ...d,
+          selected: true
+        }))
+      );
+      setOverflowDomains([]);
+
+      // Generate similar domains
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          description: `Generate domain names similar to: ${domain}. Use similar word patterns, prefixes, or suffixes.`,
+          excludeDomains: Array.from(searchedDomains)
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to generate similar domain suggestions');
+      }
+
+      const data = await response.json();
+      
+      // Add new domains with checking status
+      const newDomains: DomainResult[] = data.suggestions
+        .filter((d: string) => d !== domain)
+        .slice(0, 4)
+        .map((domain: string) => ({
+          domain,
+          checking: true
+        }));
+
+      // Update searched domains
+      newDomains.forEach(d => {
+        searchedDomains.add(d.domain);
+      });
+      setSearchedDomains(new Set(searchedDomains));
+
+      // Add new domains to display
+      setDisplayedDomains(current => [...current, ...newDomains]);
+
+      // Start checking availability
+      const checkAvailability = async () => {
+        try {
+          const response = await fetch('/api/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains: newDomains.map(d => d.domain) })
+          });
+          
+          if (!response.ok) throw new Error('Failed to check availability');
+          
+          const results = await response.json();
+          
+          // Update domains with availability
+          setDisplayedDomains(current => 
+            current.map(d => {
+              if (d.domain === domain) return d; // Keep selected domain as is
+              const result = results.find(r => r.domain === d.domain);
+              if (result) {
+                return {
+                  ...d,
+                  checking: false,
+                  available: result.available,
+                  error: result.error,
+                  showAvailable: result.available
+                };
+              }
+              return d;
+            })
+          );
+
+          // Remove unavailable domains after animation
+          setTimeout(() => {
+            setDisplayedDomains(current => 
+              current.filter(d => d.domain === domain || d.available)
+            );
+          }, 2000);
+        } catch (error) {
+          console.error('Error checking availability:', error);
+          setError('Failed to check domain availability');
+        }
+      };
+
+      checkAvailability();
+      
+    } catch (err) {
+      console.error('Error generating similar domains:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLessLikeThis = async (domain: string) => {
+    // Add to disliked domains
+    setDislikedDomains(prev => [...prev, domain]);
+    
+    // Mark the domain as disliked and remove after animation
+    setDisplayedDomains(current =>
+      current.map(d => 
+        d.domain === domain 
+          ? { ...d, disliked: true, available: false }
+          : d
+      )
+    );
+
+    // Remove the domain after animation
+    setTimeout(() => {
+      setDisplayedDomains(current => 
+        current.filter(d => d.domain !== domain)
+      );
+    }, 1000);
+
+    // If we need more domains after removing this one
+    if (displayedDomains.length <= TARGET_DOMAIN_COUNT) {
+      handleGenerateDomains();
+    }
+  };
+
+  const promoteNextDomain = () => {
     if (overflowDomains.length > 0) {
       const [nextDomain, ...remainingOverflow] = overflowDomains;
       setDisplayedDomains(current => [...current, nextDomain]);
@@ -265,8 +404,9 @@ export default function Home() {
                   key={result.domain}
                   className={`p-4 bg-white rounded-lg shadow-sm border transition-colors duration-300 ${
                     result.checking ? 'border-blue-200' :
-                    result.showAvailable ? 'border-green-500' :
-                    !result.available ? 'border-red-500' :
+                    result.selected ? 'border-green-500' :
+                    result.disliked ? 'border-red-500 bg-red-50' :
+                    result.available ? 'border-gray-200' :
                     'border-gray-200'
                   }`}
                 >
@@ -291,7 +431,21 @@ export default function Home() {
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-3">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleMoreLikeThis(result.domain)}
+                        className={`px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors`}
+                        disabled={loading || result.checking}
+                      >
+                        More like this
+                      </button>
+                      <button
+                        onClick={() => handleLessLikeThis(result.domain)}
+                        className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                        disabled={loading || result.checking}
+                      >
+                        Less like this
+                      </button>
                       <button
                         onClick={() => handleStar(result)}
                         className={`p-2 rounded-full hover:bg-gray-100 transition-colors ${
