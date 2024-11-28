@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SiteSnag - AI-Powered Domain Name Generator
+
+SiteSnag is a modern web application that helps users find the perfect domain name using AI-powered suggestions. The app integrates with Mistral AI for creative domain generation and uses domain availability APIs to ensure suggested domains are available for registration.
+
+## Features
+
+- AI-powered domain name generation using Mistral AI
+- Real-time domain availability checking
+- Interactive refinement through user actions:
+  - "More Like This" - Generate similar domain suggestions
+  - "Less Like This" - Remove and avoid similar suggestions
+  - "Trash" - Remove unwanted suggestions
+  - "Star" - Save favorite domain names
+- Buffer system for smooth user experience
+- Modern, responsive UI built with Next.js and Tailwind CSS
 
 ## Getting Started
 
-First, run the development server:
-
+1. Clone the repository
+2. Install dependencies:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Set up environment variables:
+Create a `.env.local` file in the root directory with the following variables:
+```
+MISTRAL_API_KEY=your_mistral_api_key
+DOMAIN_API_KEY=your_domain_api_key
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+4. Run the development server:
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+5. Open [http://localhost:3000](http://localhost:3000) with your browser to see the application.
 
-## Learn More
+## Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- Next.js 13+ with App Router
+- TypeScript
+- Tailwind CSS
+- React Icons
+- Mistral AI API
+- Domain Availability API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+sitesnag/
+├── app/
+│   ├── api/
+│   │   └── domains/
+│   │       └── route.ts    # API endpoints for domain generation
+│   ├── components/
+│   │   ├── DomainCard.tsx  # Individual domain suggestion component
+│   │   └── DomainSuggestions.tsx # Main domain management component
+│   ├── services/
+│   │   └── domainService.ts # API integration service
+│   └── page.tsx            # Main application page
+├── public/
+└── ...config files
 
-## Deploy on Vercel
+## Contributing
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+
+MIT License - feel free to use this project for personal or commercial purposes.
